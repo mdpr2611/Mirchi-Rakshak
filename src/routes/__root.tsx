@@ -150,13 +150,22 @@ function RootOutlet() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const { data } = await supabase.from("profiles").select("language").eq("id", user.id).maybeSingle();
-          if (data?.language) {
+          const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+          if (!data) {
+            const meta = user.user_metadata || {};
+            await supabase.from("profiles").upsert({
+              id: user.id,
+              full_name: meta.full_name || meta.name || user.email?.split("@")[0] || "Farmer",
+              phone: meta.phone || null,
+              district: "Guntur",
+              language: "en",
+            });
+          } else if (data?.language) {
             setLang(data.language as "en" | "hi" | "te");
           }
         }
       } catch (error) {
-        console.error("Failed to load user language:", error);
+        console.error("Failed to sync user profile/language:", error);
       }
     };
 
