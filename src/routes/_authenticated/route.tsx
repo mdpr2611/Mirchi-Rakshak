@@ -1,38 +1,21 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { auth } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async () => {
-    const firebaseUser = await new Promise((resolve) => {
-      if (auth.currentUser) {
-        resolve(auth.currentUser);
-        return;
-      }
-      const unsubscribe = onAuthStateChanged(
-        auth,
-        (u) => {
-          unsubscribe();
-          resolve(u);
-        },
-        () => {
-          resolve(null);
-        }
-      );
-    });
-
-    if (firebaseUser) return { user: firebaseUser };
-
     try {
-      const { data } = await supabase.auth.getUser();
-      if (data?.user) return { user: data.user };
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) return { user: session.user };
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) return { user };
     } catch (e) {
-      console.warn("Supabase auth check fallback:", e);
+      console.warn("Supabase auth check:", e);
     }
 
     throw redirect({ to: "/auth" });
   },
   component: () => <Outlet />,
 });
+

@@ -6,8 +6,6 @@ import { ArrowLeft, ChevronRight, LogOut, Globe, MapPin, Sprout, Calendar, Spark
 import { PhoneShell } from "@/components/PhoneShell";
 import { BottomNav } from "@/components/BottomNav";
 import { supabase } from "@/integrations/supabase/client";
-import { auth } from "@/lib/firebase";
-import { signOut as firebaseSignOut } from "firebase/auth";
 import { useLang, languageOptions, type Lang } from "@/lib/i18n";
 import { useUserLocation } from "@/lib/location";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -22,7 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/profile")({
-  head: () => ({ meta: [{ title: "Profile — MirchiRakshak AI" }] }),
+  head: () => ({ meta: [{ title: "Profile — MirchiRakshak" }] }),
   component: ProfilePage,
 });
 
@@ -42,28 +40,28 @@ function ProfilePage() {
   const { data: profile } = useQuery({
     queryKey: ["profile"],
     queryFn: async () => {
-      const fbUser = auth.currentUser;
-      if (fbUser) {
-        return {
-          full_name: fbUser.displayName || fbUser.email?.split("@")[0] || fbUser.phoneNumber || "Farmer",
-          email: fbUser.email || fbUser.phoneNumber || "",
-          avatar_url: fbUser.photoURL || null,
-          district: "Guntur",
-        };
-      }
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
       const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-      return { ...data, email: user.email };
+      const meta = user.user_metadata || {};
+      const isPhoneEmail = (user.email || "").startsWith("farmer_");
+      const displayEmail = isPhoneEmail ? (meta.phone || data?.phone || "") : (user.email || "");
+      return {
+        ...data,
+        full_name: data?.full_name || meta.full_name || meta.name || (isPhoneEmail ? "Farmer" : user.email?.split("@")[0]) || "Farmer",
+        email: displayEmail,
+        phone: data?.phone || meta.phone || "",
+        avatar_url: meta.avatar_url || null,
+        district: data?.district || "Guntur",
+      };
     },
   });
 
   async function signOut() {
     try {
-      await firebaseSignOut(auth);
       await supabase.auth.signOut();
     } catch (e) {
-      console.error(e);
+      console.error("Sign out error:", e);
     }
     nav({ to: "/auth" });
   }

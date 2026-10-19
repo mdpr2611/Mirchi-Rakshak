@@ -1,22 +1,26 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
-import {
-  signInWithPopup,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  updateProfile,
-} from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
+import { supabase } from "@/integrations/supabase/client";
 import { PhoneShell } from "@/components/PhoneShell";
 import { useLang } from "@/lib/i18n";
 import { Mail, Lock, User as UserIcon, ArrowLeft, Phone } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
+  beforeLoad: async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        throw redirect({ to: "/home" });
+      }
+    } catch (e: any) {
+      if (e?.to) throw e;
+    }
+  },
   head: () => ({
     meta: [
-      { title: "Sign in — MirchiRakshak AI" },
+      { title: "Sign in — MirchiRakshak" },
       { name: "description", content: "Sign in or create an account to protect your chili crop." },
     ],
   }),
@@ -33,7 +37,7 @@ function formatPhone(num: string) {
 }
 
 function getPhoneLoginEmail(phoneNumber: string) {
-  return `phone_${phoneNumber.replace(/\D/g, "")}@phone.mirchirakshak.invalid`;
+  return `farmer_${phoneNumber.replace(/\D/g, "")}@mirchirakshak.app`;
 }
 
 function AuthPage() {
@@ -51,17 +55,16 @@ function AuthPage() {
   async function google() {
     setLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
-      toast.success("Signed in with Google!");
-      nav({ to: "/home" });
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/home`,
+        },
+      });
+      if (error) throw error;
     } catch (e: any) {
       console.error("Google auth error:", e);
-      if (e?.code === "auth/popup-closed-by-user") return;
-      if (e?.code === "auth/operation-not-allowed") {
-        toast.error("Google Auth is not enabled in Firebase Console yet. Please use Email sign-in.");
-      } else {
-        toast.error(e?.message?.replace("Firebase: ", "") || "Google sign-in failed.");
-      }
+      toast.error(e?.message || "Google sign-in failed. Please use Email or Phone.");
     } finally {
       setLoading(false);
     }
@@ -71,26 +74,93 @@ function AuthPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const phoneLoginEmail = signInType === "phone"
-        ? getPhoneLoginEmail(formatPhone(phone))
-        : undefined;
-      const loginEmail = phoneLoginEmail || email;
+      const isPhone = signInType === "phone";
+      let formattedPhone: string | undefined;
+      if (phone.trim()) {
+        try {
+          formattedPhone = formatPhone(phone);
+        } catch (err: any) {
+          if (isPhone || mode === "signup") {
+            toast.error(err.message || "Invalid mobile number");
+            setLoading(false);
+            return;
+          }
+        }
+      }
+
+      const loginEmail = isPhone
+        ? getPhoneLoginEmail(formattedPhone || formatPhone(phone))
+        : email.trim().toLowerCase();
 
       if (mode === "signup") {
-        const userCredential = await createUserWithEmailAndPassword(auth, loginEmail, password);
-        if (name.trim() && userCredential.user) {
-          await updateProfile(userCredential.user, { displayName: name.trim() });
+        const { data, error } = await supabase.auth.signUp({
+          email: loginEmail,
+          password,
+          options: {
+            data: {
+              full_name: name.trim() || undefined,
+              phone: formattedPhone || undefined,
+            },
+          },
+        });
+
+        if (error) {
+          if (/already registered|already in use|unique constraint/i.test(error.message)) {
+            toast.error("An account with this email/phone already exists. Please sign in.");
+            setMode("signin");
+            return;
+          }
+          throw error;
         }
-        toast.success("Account created successfully!");
+
+        // Save profile in Supabase profiles table
+        if (data?.user) {
+          try {
+            await supabase.from("profiles").upsert({
+              id: data.user.id,
+              full_name: name.trim() || (isPhone ? "Farmer" : email.split("@")[0]),
+              phone: formattedPhone || null,
+              language: "en",
+            });
+          } catch (profileErr) {
+            console.warn("Profile sync note:", profileErr);
+          }
+        }
+
+        if (data?.session) {
+          toast.success("Account created successfully!");
+          nav({ to: "/home" });
+        } else {
+          toast.success("Account created! You can now sign in.");
+          setMode("signin");
+        }
       } else {
-        await signInWithEmailAndPassword(auth, loginEmail, password);
-        toast.success("Signed in successfully!");
+        // Sign in mode
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: loginEmail,
+          password,
+        });
+
+        if (error) {
+          if (/invalid login credentials|invalid username or password/i.test(error.message)) {
+            toast.error("Invalid credentials. Please verify your phone/email & password.");
+            return;
+          }
+          if (/email not confirmed/i.test(error.message)) {
+            toast.error("Email not confirmed yet. Please verify your email or contact support.");
+            return;
+          }
+          throw error;
+        }
+
+        if (data?.user) {
+          toast.success("Signed in successfully!");
+          nav({ to: "/home" });
+        }
       }
-      nav({ to: "/home" });
     } catch (e: any) {
       console.error("Auth error:", e);
-      const msg = e?.message || "Authentication failed";
-      toast.error(msg.replace("Firebase: ", ""));
+      toast.error(e?.message || "Authentication failed. Please try again.");
     } finally {
       setLoading(false);
     }

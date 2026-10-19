@@ -14,8 +14,6 @@ import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { LanguageProvider, useLang } from "../lib/i18n";
 import { supabase } from "@/integrations/supabase/client";
-import { auth } from "@/lib/firebase";
-import { onAuthStateChanged } from "firebase/auth";
 
 function NotFoundComponent() {
   return (
