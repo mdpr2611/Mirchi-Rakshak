@@ -28,12 +28,16 @@ export const Route = createFileRoute("/auth")({
 });
 
 function formatPhone(num: string) {
-  const digits = num.replace(/\D/g, "");
-  const nationalNumber = digits.startsWith("91") && digits.length === 12 ? digits.slice(2) : digits;
-  if (!/^[6-9]\d{9}$/.test(nationalNumber)) {
-    throw new Error("Enter a valid 10-digit Indian mobile number.");
+  let digits = num.replace(/\D/g, "");
+  if (digits.startsWith("91") && digits.length === 12) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith("0") && digits.length === 11) {
+    digits = digits.slice(1);
   }
-  return `+91${nationalNumber}`;
+  if (!/^[6-9]\d{9}$/.test(digits)) {
+    throw new Error("Enter a valid 10-digit Indian mobile number (e.g. 9876543210).");
+  }
+  return `+91${digits}`;
 }
 
 function getPhoneLoginEmail(phoneNumber: string) {
@@ -44,7 +48,7 @@ function AuthPage() {
   const { t } = useLang();
   const nav = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [signInType, setSignInType] = useState<"email" | "phone">("email");
+  const [signInType, setSignInType] = useState<"phone" | "email">("phone");
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -64,7 +68,7 @@ function AuthPage() {
       if (error) throw error;
     } catch (e: any) {
       console.error("Google auth error:", e);
-      toast.error(e?.message || "Google sign-in failed. Please use Email or Phone.");
+      toast.error(e?.message || "Google sign-in failed. Please use Phone number.");
     } finally {
       setLoading(false);
     }
@@ -76,20 +80,24 @@ function AuthPage() {
     try {
       const isPhone = signInType === "phone";
       let formattedPhone: string | undefined;
-      if (phone.trim()) {
+
+      if (isPhone) {
+        if (!phone.trim()) {
+          toast.error("Please enter your mobile number");
+          setLoading(false);
+          return;
+        }
         try {
           formattedPhone = formatPhone(phone);
         } catch (err: any) {
-          if (isPhone || mode === "signup") {
-            toast.error(err.message || "Invalid mobile number");
-            setLoading(false);
-            return;
-          }
+          toast.error(err.message || "Enter a valid 10-digit Indian mobile number");
+          setLoading(false);
+          return;
         }
       }
 
-      const loginEmail = isPhone
-        ? getPhoneLoginEmail(formattedPhone || formatPhone(phone))
+      const loginEmail = isPhone && formattedPhone
+        ? getPhoneLoginEmail(formattedPhone)
         : email.trim().toLowerCase();
 
       if (mode === "signup") {
@@ -106,7 +114,10 @@ function AuthPage() {
 
         if (error) {
           if (/already registered|already in use|unique constraint/i.test(error.message)) {
-            toast.error("An account with this email/phone already exists. Please sign in.");
+            toast.error(isPhone
+              ? "This mobile number is already registered. Please sign in with your password."
+              : "An account with this email already exists. Please sign in."
+            );
             setMode("signin");
             return;
           }
@@ -120,6 +131,7 @@ function AuthPage() {
               id: data.user.id,
               full_name: name.trim() || (isPhone ? "Farmer" : email.split("@")[0]),
               phone: formattedPhone || null,
+              district: "Guntur",
               language: "en",
             });
           } catch (profileErr) {
@@ -128,10 +140,10 @@ function AuthPage() {
         }
 
         if (data?.session) {
-          toast.success("Account created successfully!");
+          toast.success(isPhone ? "Mobile account created successfully!" : "Account created successfully!");
           nav({ to: "/home" });
         } else {
-          toast.success("Account created! You can now sign in.");
+          toast.success("Account created! Please sign in with your credentials.");
           setMode("signin");
         }
       } else {
@@ -143,11 +155,14 @@ function AuthPage() {
 
         if (error) {
           if (/invalid login credentials|invalid username or password/i.test(error.message)) {
-            toast.error("Invalid credentials. Please verify your phone/email & password.");
+            toast.error(isPhone
+              ? "Incorrect mobile number or password. Please verify and try again."
+              : "Incorrect email or password. Please try again."
+            );
             return;
           }
           if (/email not confirmed/i.test(error.message)) {
-            toast.error("Email not confirmed yet. Please verify your email or contact support.");
+            toast.error("Account verification pending. Please verify or contact support.");
             return;
           }
           throw error;
@@ -218,113 +233,106 @@ function AuthPage() {
         </div>
 
         <div className="grid grid-cols-2 p-1 bg-stone-100 rounded-2xl mb-4 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => {
-                setSignInType("email");
-              }}
-              className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
-                signInType === "email"
-                  ? "bg-white text-stone-900 shadow-sm"
-                  : "text-stone-500 hover:text-stone-700"
-              }`}
-            >
-              <Mail className="size-3.5" />
-              {t("signInWithEmail")}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSignInType("phone");
-              }}
-              className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
-                signInType === "phone"
-                  ? "bg-white text-stone-900 shadow-sm"
-                  : "text-stone-500 hover:text-stone-700"
-              }`}
-            >
-              <Phone className="size-3.5" />
-              {t("signInWithPhone")}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setSignInType("phone")}
+            className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
+              signInType === "phone"
+                ? "bg-white text-stone-900 shadow-sm"
+                : "text-stone-500 hover:text-stone-700"
+            }`}
+          >
+            <Phone className="size-3.5" />
+            {t("signInWithPhone")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSignInType("email")}
+            className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
+              signInType === "email"
+                ? "bg-white text-stone-900 shadow-sm"
+                : "text-stone-500 hover:text-stone-700"
+            }`}
+          >
+            <Mail className="size-3.5" />
+            {t("signInWithEmail")}
+          </button>
+        </div>
 
-          <form onSubmit={submit} className="space-y-3">
-            {mode === "signup" && (
-              <>
-                <div className="relative">
-                  <UserIcon className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                  <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    placeholder={t("fullName")}
-                    className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
-                  />
-                </div>
-                {signInType === "email" && (
-                  <div className="relative">
-                    <Phone className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                    <input
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      required
-                      type="tel"
-                      placeholder={t("phonePlaceholder")}
-                      className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
-                    />
-                  </div>
-                )}
-              </>
-            )}
-            {signInType === "phone" ? (
-              <div className="relative">
-                <Phone className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                <input
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  required
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  placeholder={t("phonePlaceholder")}
-                  className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
-                />
-              </div>
-            ) : (
-              <div className="relative">
-                <Mail className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
-                <input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  type="email"
-                  autoComplete="email"
-                  placeholder={t("email")}
-                  className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
-                />
-              </div>
-            )}
+        <form onSubmit={submit} className="space-y-3">
+          {mode === "signup" && (
             <div className="relative">
-              <Lock className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <UserIcon className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
               <input
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 required
-                type="password"
-                minLength={6}
-                autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                placeholder={t("password")}
+                placeholder={t("fullName")}
                 className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
               />
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-chili-600 text-white rounded-2xl py-4 font-semibold shadow-lg shadow-chili-600/30 active:scale-[0.98] transition disabled:opacity-60"
-            >
-              {loading ? "…" : mode === "signin" ? t("signIn") : t("signUp")}
-            </button>
-          </form>
+          )}
+
+          {signInType === "phone" ? (
+            <div className="relative flex items-center bg-white ring-1 ring-black/10 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-chili-600 transition">
+              <div className="flex items-center gap-1.5 pl-3.5 pr-2.5 py-3.5 border-r border-stone-200 bg-stone-50 select-none text-stone-700 font-semibold text-xs shrink-0">
+                <span className="text-base leading-none">🇮🇳</span>
+                <span>+91</span>
+              </div>
+              <input
+                value={phone}
+                onChange={(e) => {
+                  let val = e.target.value.replace(/\D/g, "");
+                  if (val.startsWith("91") && val.length > 10) val = val.slice(2);
+                  else if (val.startsWith("0") && val.length > 10) val = val.slice(1);
+                  setPhone(val.slice(0, 10));
+                }}
+                required
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                maxLength={10}
+                placeholder={t("phonePlaceholder") || "98765 43210"}
+                className="w-full px-3.5 py-3.5 bg-transparent text-sm placeholder:text-stone-400 outline-none font-medium tracking-wide text-stone-900"
+              />
+            </div>
+          ) : (
+            <div className="relative">
+              <Mail className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                type="email"
+                autoComplete="email"
+                placeholder={t("email")}
+                className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+              />
+            </div>
+          )}
+
+          <div className="relative">
+            <Lock className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+            <input
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              type="password"
+              minLength={6}
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              placeholder={t("password")}
+              className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-chili-600 text-white rounded-2xl py-4 font-semibold shadow-lg shadow-chili-600/30 active:scale-[0.98] transition disabled:opacity-60"
+          >
+            {loading ? "…" : mode === "signin" ? t("signIn") : t("signUp")}
+          </button>
+        </form>
 
         <button
           onClick={() => {
