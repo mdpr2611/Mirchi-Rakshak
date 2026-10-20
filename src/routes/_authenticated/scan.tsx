@@ -9,6 +9,7 @@ import { classifyChiliImageWithTFJS, loadChiliTFJSModel } from "@/lib/tfjsModel"
 import type { ChiliScanImage } from "@/lib/tfjsModel";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/lib/firebase";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { recordNewScan, type ScanRecord } from "@/lib/scans";

@@ -28,6 +28,7 @@ import { useLang } from "@/lib/i18n";
 import { fetchWeather, listScans } from "@/lib/ai.functions";
 import { useUserLocation } from "@/lib/location";
 import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/lib/firebase";
 import { UserAvatar } from "@/components/UserAvatar";
 import leafThumb from "@/assets/card_leaf_thumb.png";
 import chilliFlower from "@/assets/chilli_flower_realistic.png";
