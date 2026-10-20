@@ -1,10 +1,12 @@
 import { createFileRoute, useNavigate, Link, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { PhoneShell } from "@/components/PhoneShell";
 import { useLang } from "@/lib/i18n";
-import { Mail, Lock, User as UserIcon, ArrowLeft, Phone, Eye, EyeOff } from "lucide-react";
+import { Mail, Lock, User as UserIcon, ArrowLeft, Phone, Eye, EyeOff, KeyRound, CheckCircle2 } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { resetPhoneAccountPassword } from "@/lib/ai.functions";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -12,6 +14,10 @@ export const Route = createFileRoute("/auth")({
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
+        // If recovery token is present in hash, allow landing on /auth to update password
+        if (typeof window !== "undefined" && (window.location.hash.includes("type=recovery") || window.location.search.includes("reset=true"))) {
+          return;
+        }
         throw redirect({ to: "/home" });
       }
     } catch (e: any) {
@@ -47,15 +53,43 @@ function getPhoneLoginEmail(phoneNumber: string) {
 function AuthPage() {
   const { t } = useLang();
   const nav = useNavigate();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const resetPhonePasswordFn = useServerFn(resetPhoneAccountPassword);
+
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot" | "update-password">("signin");
   const [signInType, setSignInType] = useState<"phone" | "email">("phone");
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Detect password recovery callback
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash || "";
+      const search = window.location.search || "";
+      if (hash.includes("type=recovery") || search.includes("reset=true") || hash.includes("access_token")) {
+        setMode("update-password");
+      }
+    }
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setMode("update-password");
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   async function google() {
     setLoading(true);
@@ -79,6 +113,76 @@ function AuthPage() {
     e.preventDefault();
     setLoading(true);
     try {
+      // 1. Password Update Mode (from recovery link)
+      if (mode === "update-password") {
+        if (!newPassword || newPassword.length < 6) {
+          toast.error("Password must be at least 6 characters long.");
+          setLoading(false);
+          return;
+        }
+        if (newPassword !== confirmPassword) {
+          toast.error("Passwords do not match. Please re-enter.");
+          setLoading(false);
+          return;
+        }
+
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) throw error;
+
+        toast.success("Password updated successfully! Welcome back.");
+        nav({ to: "/home" });
+        return;
+      }
+
+      // 2. Forgot Password Mode
+      if (mode === "forgot") {
+        if (signInType === "email") {
+          if (!email.trim()) {
+            toast.error("Please enter your registered email address.");
+            setLoading(false);
+            return;
+          }
+
+          const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+            redirectTo: `${window.location.origin}/auth?reset=true`,
+          });
+          if (error) throw error;
+
+          toast.success("Password reset link sent! Please check your email inbox.");
+          setMode("signin");
+          return;
+        }
+
+        // Phone reset mode
+        if (!phone.trim()) {
+          toast.error("Please enter your registered 10-digit mobile number.");
+          setLoading(false);
+          return;
+        }
+        if (!newPassword || newPassword.length < 6) {
+          toast.error("New password must be at least 6 characters long.");
+          setLoading(false);
+          return;
+        }
+        if (newPassword !== confirmPassword) {
+          toast.error("Passwords do not match. Please re-enter.");
+          setLoading(false);
+          return;
+        }
+
+        const res = await resetPhonePasswordFn({
+          data: { phone, newPassword },
+        });
+
+        toast.success(res.message || "Password updated successfully!");
+        setPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setMode("signin");
+        return;
+      }
+
+      // 3. Regular Sign-in / Sign-up
       const isPhone = signInType === "phone";
       let formattedPhone: string | undefined;
 
@@ -182,83 +286,120 @@ function AuthPage() {
     }
   }
 
+  const isResetMode = mode === "forgot" || mode === "update-password";
+
   return (
     <PhoneShell>
       <div className="min-h-screen flex flex-col px-6 pt-14 pb-8">
-        <Link
-          to="/onboarding"
-          className="size-10 rounded-full bg-white ring-1 ring-black/5 grid place-items-center shadow-sm mb-6"
+        <button
+          type="button"
+          onClick={() => {
+            if (isResetMode) setMode("signin");
+            else nav({ to: "/onboarding" });
+          }}
+          className="size-10 rounded-full bg-white ring-1 ring-black/5 grid place-items-center shadow-sm mb-6 active:scale-95 transition"
           aria-label="Back"
         >
           <ArrowLeft className="size-4" />
-        </Link>
+        </button>
 
         <div className="mb-6">
-          <p className="text-chili-600 font-telugu font-medium text-sm mb-1">{t("greeting")} 🙏</p>
+          {isResetMode ? (
+            <div className="flex items-center gap-2 text-chili-600 font-semibold text-xs uppercase tracking-wider mb-1">
+              <KeyRound className="size-4" />
+              <span>{t("resetPassword")}</span>
+            </div>
+          ) : (
+            <p className="text-chili-600 font-telugu font-medium text-sm mb-1">{t("greeting")} 🙏</p>
+          )}
+
           <h1 className="text-3xl font-bold tracking-tight text-stone-900">
-            {mode === "signin" ? t("welcomeBack") : t("createAccount")}
+            {mode === "signin"
+              ? t("welcomeBack")
+              : mode === "signup"
+              ? t("createAccount")
+              : mode === "forgot"
+              ? t("resetPassword")
+              : t("updatePassword")}
           </h1>
+
           <p className="mt-1.5 text-stone-500 text-sm">
-            {mode === "signin" ? t("signInSub") : t("signUpSub")}
+            {mode === "signin"
+              ? t("signInSub")
+              : mode === "signup"
+              ? t("signUpSub")
+              : mode === "forgot"
+              ? signInType === "phone"
+                ? t("resetSubPhone")
+                : t("resetSubEmail")
+              : t("resetSubNewPass")}
           </p>
         </div>
 
-        <button
-          onClick={google}
-          disabled={loading}
-          className="w-full bg-white ring-1 ring-black/10 rounded-2xl py-3.5 flex items-center justify-center gap-3 font-semibold text-stone-800 shadow-sm active:scale-[0.98] transition disabled:opacity-60"
-        >
-          <svg viewBox="0 0 24 24" className="size-5">
-            <path
-              fill="#4285F4"
-              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.75h3.57c2.08-1.92 3.28-4.74 3.28-8.07z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.75c-.99.66-2.25 1.06-3.71 1.06-2.85 0-5.27-1.92-6.13-4.5H2.18v2.82C3.99 20.53 7.7 23 12 23z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.87 14.15A6.94 6.94 0 015.5 12c0-.75.13-1.48.36-2.15V7.03H2.18A11 11 0 001 12c0 1.77.42 3.45 1.18 4.97l3.69-2.82z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.03l3.69 2.82C6.73 7.3 9.15 5.38 12 5.38z"
-            />
-          </svg>
-          {t("continueWithGoogle")}
-        </button>
+        {/* Google sign-in button only in normal sign-in / sign-up modes */}
+        {!isResetMode && (
+          <>
+            <button
+              onClick={google}
+              disabled={loading}
+              className="w-full bg-white ring-1 ring-black/10 rounded-2xl py-3.5 flex items-center justify-center gap-3 font-semibold text-stone-800 shadow-sm active:scale-[0.98] transition disabled:opacity-60"
+            >
+              <svg viewBox="0 0 24 24" className="size-5">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.75h3.57c2.08-1.92 3.28-4.74 3.28-8.07z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.75c-.99.66-2.25 1.06-3.71 1.06-2.85 0-5.27-1.92-6.13-4.5H2.18v2.82C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.87 14.15A6.94 6.94 0 015.5 12c0-.75.13-1.48.36-2.15V7.03H2.18A11 11 0 001 12c0 1.77.42 3.45 1.18 4.97l3.69-2.82z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.03l3.69 2.82C6.73 7.3 9.15 5.38 12 5.38z"
+                />
+              </svg>
+              {t("continueWithGoogle")}
+            </button>
 
-        <div className="my-5 flex items-center gap-3 text-stone-300 text-[10px] font-bold uppercase tracking-widest">
-          <div className="flex-1 h-px bg-stone-200" /> {t("or")} {signInType === "phone" ? t("phone") : t("email")} <div className="flex-1 h-px bg-stone-200" />
-        </div>
+            <div className="my-5 flex items-center gap-3 text-stone-300 text-[10px] font-bold uppercase tracking-widest">
+              <div className="flex-1 h-px bg-stone-200" /> {t("or")} {signInType === "phone" ? t("phone") : t("email")} <div className="flex-1 h-px bg-stone-200" />
+            </div>
+          </>
+        )}
 
-        <div className="grid grid-cols-2 p-1 bg-stone-100 rounded-2xl mb-4 text-xs font-semibold">
-          <button
-            type="button"
-            onClick={() => setSignInType("phone")}
-            className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
-              signInType === "phone"
-                ? "bg-white text-stone-900 shadow-sm"
-                : "text-stone-500 hover:text-stone-700"
-            }`}
-          >
-            <Phone className="size-3.5" />
-            {t("signInWithPhone")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSignInType("email")}
-            className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
-              signInType === "email"
-                ? "bg-white text-stone-900 shadow-sm"
-                : "text-stone-500 hover:text-stone-700"
-            }`}
-          >
-            <Mail className="size-3.5" />
-            {t("signInWithEmail")}
-          </button>
-        </div>
+        {/* Tab switcher: Phone vs Email (available in signin, signup, and forgot) */}
+        {mode !== "update-password" && (
+          <div className="grid grid-cols-2 p-1 bg-stone-100 rounded-2xl mb-4 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setSignInType("phone")}
+              className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
+                signInType === "phone"
+                  ? "bg-white text-stone-900 shadow-sm"
+                  : "text-stone-500 hover:text-stone-700"
+              }`}
+            >
+              <Phone className="size-3.5" />
+              {t("signInWithPhone")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSignInType("email")}
+              className={`py-2.5 rounded-xl transition flex items-center justify-center gap-2 ${
+                signInType === "email"
+                  ? "bg-white text-stone-900 shadow-sm"
+                  : "text-stone-500 hover:text-stone-700"
+              }`}
+            >
+              <Mail className="size-3.5" />
+              {t("signInWithEmail")}
+            </button>
+          </div>
+        )}
 
         <form onSubmit={submit} className="space-y-3">
           {mode === "signup" && (
@@ -274,93 +415,190 @@ function AuthPage() {
             </div>
           )}
 
-          {signInType === "phone" ? (
-            <div className="relative flex items-center bg-white ring-1 ring-black/10 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-chili-600 transition">
-              <div className="flex items-center gap-1.5 pl-3.5 pr-2.5 py-3.5 border-r border-stone-200 bg-stone-50 select-none text-stone-700 font-semibold text-xs shrink-0">
-                <span className="text-base leading-none">🇮🇳</span>
-                <span>+91</span>
+          {/* Identifier inputs (phone or email) when not updating password */}
+          {mode !== "update-password" && (
+            signInType === "phone" ? (
+              <div className="relative flex items-center bg-white ring-1 ring-black/10 rounded-2xl overflow-hidden focus-within:ring-2 focus-within:ring-chili-600 transition">
+                <div className="flex items-center gap-1.5 pl-3.5 pr-2.5 py-3.5 border-r border-stone-200 bg-stone-50 select-none text-stone-700 font-semibold text-xs shrink-0">
+                  <span className="text-base leading-none">🇮🇳</span>
+                  <span>+91</span>
+                </div>
+                <input
+                  value={phone}
+                  onChange={(e) => {
+                    let val = e.target.value.replace(/\D/g, "");
+                    if (val.startsWith("91") && val.length > 10) val = val.slice(2);
+                    else if (val.startsWith("0") && val.length > 10) val = val.slice(1);
+                    setPhone(val.slice(0, 10));
+                  }}
+                  required
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel-national"
+                  maxLength={10}
+                  placeholder={t("phonePlaceholder") || "98765 43210"}
+                  className="w-full px-3.5 py-3.5 bg-transparent text-sm placeholder:text-stone-400 outline-none font-medium tracking-wide text-stone-900"
+                />
               </div>
-              <input
-                value={phone}
-                onChange={(e) => {
-                  let val = e.target.value.replace(/\D/g, "");
-                  if (val.startsWith("91") && val.length > 10) val = val.slice(2);
-                  else if (val.startsWith("0") && val.length > 10) val = val.slice(1);
-                  setPhone(val.slice(0, 10));
-                }}
-                required
-                type="tel"
-                inputMode="numeric"
-                autoComplete="tel-national"
-                maxLength={10}
-                placeholder={t("phonePlaceholder") || "98765 43210"}
-                className="w-full px-3.5 py-3.5 bg-transparent text-sm placeholder:text-stone-400 outline-none font-medium tracking-wide text-stone-900"
-              />
-            </div>
-          ) : (
-            <div className="relative">
-              <Mail className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                type="email"
-                autoComplete="email"
-                placeholder={t("email")}
-                className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
-              />
+            ) : (
+              <div className="relative">
+                <Mail className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  type="email"
+                  autoComplete="email"
+                  placeholder={t("email")}
+                  className="w-full pl-11 pr-4 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+                />
+              </div>
+            )
+          )}
+
+          {/* Regular password input in signin & signup */}
+          {(mode === "signin" || mode === "signup") && (
+            <div className="space-y-1">
+              <div className="relative">
+                <Lock className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  type={showPassword ? "text" : "password"}
+                  minLength={6}
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  placeholder={t("password")}
+                  className="w-full pl-11 pr-11 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 focus:outline-none"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+
+              {/* Forgot password link */}
+              {mode === "signin" && (
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("forgot");
+                      setPassword("");
+                    }}
+                    className="text-xs font-semibold text-chili-600 hover:text-chili-700 transition"
+                  >
+                    {t("forgotPassword")}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
-          <div className="relative">
-            <Lock className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              type={showPassword ? "text" : "password"}
-              minLength={6}
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
-              placeholder={t("password")}
-              className="w-full pl-11 pr-11 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 focus:outline-none"
-              tabIndex={-1}
-            >
-              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-            </button>
-          </div>
+          {/* New password & Confirm password inputs for Phone Forgot OR Recovery Mode */}
+          {((mode === "forgot" && signInType === "phone") || mode === "update-password") && (
+            <>
+              <div className="relative">
+                <Lock className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  type={showNewPassword ? "text" : "password"}
+                  minLength={6}
+                  placeholder={t("newPassword")}
+                  className="w-full pl-11 pr-11 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 focus:outline-none"
+                  tabIndex={-1}
+                >
+                  {showNewPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+
+              <div className="relative">
+                <Lock className="size-4 text-stone-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                <input
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  type={showConfirmPassword ? "text" : "password"}
+                  minLength={6}
+                  placeholder={t("confirmPassword")}
+                  className="w-full pl-11 pr-11 py-3.5 bg-white ring-1 ring-black/10 rounded-2xl text-sm placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 focus:outline-none"
+                  tabIndex={-1}
+                >
+                  {showConfirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </>
+          )}
 
           <button
             type="submit"
             disabled={loading}
             className="w-full bg-chili-600 text-white rounded-2xl py-4 font-semibold shadow-lg shadow-chili-600/30 active:scale-[0.98] transition disabled:opacity-60"
           >
-            {loading ? "…" : mode === "signin" ? t("signIn") : t("signUp")}
+            {loading
+              ? "…"
+              : mode === "signin"
+              ? t("signIn")
+              : mode === "signup"
+              ? t("signUp")
+              : mode === "forgot"
+              ? signInType === "email"
+                ? t("sendResetLink")
+                : t("updatePassword")
+              : t("updatePassword")}
           </button>
         </form>
 
-        <button
-          onClick={() => {
-            setMode(mode === "signin" ? "signup" : "signin");
-          }}
-          className="mt-auto pt-8 text-center text-sm text-stone-500"
-        >
-          {mode === "signin" ? (
-            <>
-              {t("newHere")}{" "}
-              <span className="font-semibold text-chili-600">{t("signUp")}</span>
-            </>
-          ) : (
-            <>
-              {t("alreadyAccount")}{" "}
-              <span className="font-semibold text-chili-600">{t("signIn")}</span>
-            </>
-          )}
-        </button>
+        {/* Footer switch links */}
+        {isResetMode ? (
+          <button
+            type="button"
+            onClick={() => {
+              setMode("signin");
+              setPassword("");
+              setNewPassword("");
+              setConfirmPassword("");
+            }}
+            className="mt-auto pt-8 text-center text-sm font-semibold text-stone-500 hover:text-chili-600 transition"
+          >
+            ← {t("backToSignIn")}
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              setMode(mode === "signin" ? "signup" : "signin");
+            }}
+            className="mt-auto pt-8 text-center text-sm text-stone-500"
+          >
+            {mode === "signin" ? (
+              <>
+                {t("newHere")}{" "}
+                <span className="font-semibold text-chili-600">{t("signUp")}</span>
+              </>
+            ) : (
+              <>
+                {t("alreadyAccount")}{" "}
+                <span className="font-semibold text-chili-600">{t("signIn")}</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
     </PhoneShell>
   );

@@ -659,3 +659,69 @@ export const listScans = createServerFn({ method: "GET" })
     }
     return [];
   });
+
+export const resetPhoneAccountPassword = createServerFn({ method: "POST" })
+  .validator((data: unknown) => {
+    const d = data as { phone?: string; newPassword?: string };
+    if (!d?.phone || typeof d.phone !== "string") {
+      throw new Error("Phone number is required");
+    }
+    if (!d?.newPassword || typeof d.newPassword !== "string" || d.newPassword.length < 6) {
+      throw new Error("Password must be at least 6 characters long");
+    }
+    return { phone: d.phone, newPassword: d.newPassword };
+  })
+  .handler(async ({ data }): Promise<{ success: boolean; message: string }> => {
+    let digits = data.phone.replace(/\D/g, "");
+    if (digits.startsWith("91") && digits.length === 12) digits = digits.slice(2);
+    else if (digits.startsWith("0") && digits.length === 11) digits = digits.slice(1);
+    if (!/^[6-9]\d{9}$/.test(digits)) {
+      throw new Error("Invalid 10-digit Indian phone number.");
+    }
+
+    const formattedPhone = `+91${digits}`;
+    const syntheticEmail = `farmer_${digits}@mirchirakshak.app`;
+
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("id")
+        .eq("phone", formattedPhone)
+        .maybeSingle();
+
+      let targetUserId = profile?.id;
+
+      if (!targetUserId) {
+        const { data: usersData, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
+        if (!listErr && usersData?.users) {
+          const matchedUser = usersData.users.find(
+            (u) =>
+              u.email === syntheticEmail ||
+              u.phone === formattedPhone ||
+              u.user_metadata?.phone === formattedPhone
+          );
+          if (matchedUser) targetUserId = matchedUser.id;
+        }
+      }
+
+      if (!targetUserId) {
+        throw new Error("No account found registered with this mobile number. Please check the number or sign up.");
+      }
+
+      const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+        password: data.newPassword,
+      });
+
+      if (updateErr) throw updateErr;
+
+      return {
+        success: true,
+        message: "Password updated successfully! You can now sign in with your new password.",
+      };
+    } catch (e: any) {
+      console.error("[resetPhoneAccountPassword] error:", e);
+      throw new Error(e?.message || "Failed to reset password. Please try again.");
+    }
+  });

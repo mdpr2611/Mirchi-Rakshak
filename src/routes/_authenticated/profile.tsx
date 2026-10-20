@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, ChevronRight, LogOut, Globe, MapPin, Sprout, Calendar, Sparkles, Check, Clock, Edit3 } from "lucide-react";
+import { ArrowLeft, ChevronRight, LogOut, Globe, MapPin, Sprout, Calendar, Sparkles, Check, Clock, Edit3, Lock, Eye, EyeOff, KeyRound } from "lucide-react";
 import { PhoneShell } from "@/components/PhoneShell";
 import { BottomNav } from "@/components/BottomNav";
 import { supabase } from "@/integrations/supabase/client";
@@ -33,6 +33,41 @@ function ProfilePage() {
   const [cropData, setCropData] = useState(() => loadCropProfile());
   const [customVariety, setCustomVariety] = useState("");
   const [isSavingCrop, setIsSavingCrop] = useState(false);
+
+  // Change password state
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 6) {
+      toast.error("Password must be at least 6 characters long.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
+      toast.success(t("updatePassword") + " successfully!");
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowPasswordChange(false);
+    } catch (err: any) {
+      console.error("Change password error:", err);
+      toast.error(err?.message || "Failed to update password.");
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  }
 
   // Live harvest calculation
   const harvest = calculateHarvest(cropData.plantationDate, cropData.stage, lang);
@@ -363,6 +398,77 @@ function ProfilePage() {
               </button>
             ))}
           </div>
+        </section>
+
+        {/* Change Password Section */}
+        <section className="bg-white rounded-3xl p-5 ring-1 ring-black/5 shadow-sm animate-rise">
+          <div className="flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-stone-800">
+              <KeyRound className="size-4 text-chili-600" /> {t("changePassword")}
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowPasswordChange(!showPasswordChange)}
+              className="text-xs font-semibold text-chili-600 hover:text-chili-700 transition"
+            >
+              {showPasswordChange ? "Cancel" : t("changePassword")}
+            </button>
+          </div>
+
+          {showPasswordChange && (
+            <form onSubmit={handleChangePassword} className="mt-4 space-y-3 pt-3 border-t border-stone-100">
+              <div className="relative">
+                <Lock className="size-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type={showNewPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder={t("newPassword")}
+                  required
+                  minLength={6}
+                  className="w-full pl-10 pr-10 py-2.5 bg-earth-50 ring-1 ring-black/5 rounded-xl text-xs placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                  tabIndex={-1}
+                >
+                  {showNewPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                </button>
+              </div>
+
+              <div className="relative">
+                <Lock className="size-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder={t("confirmPassword")}
+                  required
+                  minLength={6}
+                  className="w-full pl-10 pr-10 py-2.5 bg-earth-50 ring-1 ring-black/5 rounded-xl text-xs placeholder:text-stone-400 focus:ring-2 focus:ring-chili-600 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                  tabIndex={-1}
+                >
+                  {showConfirmPassword ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                </button>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isUpdatingPassword}
+                className="w-full bg-chili-600 hover:bg-chili-700 active:scale-[0.98] text-white rounded-xl py-2.5 text-xs font-bold shadow-sm transition disabled:opacity-60 flex items-center justify-center gap-1.5"
+              >
+                <Check className="size-3.5" />
+                {isUpdatingPassword ? "Updating..." : t("updatePassword")}
+              </button>
+            </form>
+          )}
         </section>
 
         <section className="bg-white rounded-3xl ring-1 ring-black/5 shadow-sm divide-y divide-black/5 animate-rise overflow-hidden">
