@@ -274,7 +274,7 @@ async function callGeminiVision({
 
 export const analyzeScan = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: unknown) => {
+  .validator((data: unknown) => {
     const d = data as {
       imageBase64?: string;
       imageUrl?: string;
@@ -451,7 +451,7 @@ async function callGeminiChat({
 
 export const chatAssistant = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: unknown) => {
+  .validator((data: unknown) => {
     const d = data as { messages?: { role: "user" | "assistant"; content: string }[]; language?: string };
     if (!Array.isArray(d?.messages)) throw new Error("messages required");
     return { messages: d.messages, language: d.language ?? "en" };
@@ -489,7 +489,7 @@ export type WeatherData = {
 };
 
 export const fetchWeather = createServerFn({ method: "GET" })
-  .inputValidator((data: unknown) => {
+  .validator((data: unknown) => {
     const d = data as { lat?: number; lon?: number };
     return { lat: d?.lat ?? 16.3067, lon: d?.lon ?? 80.4365 }; // Guntur default
   })
@@ -563,7 +563,7 @@ export const fetchWeather = createServerFn({ method: "GET" })
 
 export const saveScan = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => d as ScanResult & { image_url?: string; language?: string })
+  .validator((d: unknown) => d as ScanResult & { image_url?: string; language?: string })
   .handler(async ({ data, context }) => {
     const rawUserId = context?.userId || "anonymous";
     const userId = toValidUuid(rawUserId);
